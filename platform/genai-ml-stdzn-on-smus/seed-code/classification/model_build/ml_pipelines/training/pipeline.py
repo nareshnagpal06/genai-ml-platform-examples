@@ -74,6 +74,12 @@ def get_pipeline(
     glue_table = ParameterString(
         name="GlueTable", default_value=glue_table_name
     )
+    mlflow_tracking_uri = ParameterString(
+        name="MLflowTrackingUri", default_value=""
+    )
+    mlflow_experiment_name = ParameterString(
+        name="MLflowExperimentName", default_value="BankMarketingExperiment"
+    )
     
     # Create a ScriptProcessor for data preprocessing with requirements.txt
     script_processor = ScriptProcessor(
@@ -115,6 +121,10 @@ def get_pipeline(
             "--database-name", glue_database,
             "--table-name", glue_table
         ],
+        environment={
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
+        }
     )
 
     # training step for generating model artifacts
@@ -197,6 +207,10 @@ def get_pipeline(
         ],
         code="source_scripts/evaluate/evaluate_xgboost/main.py",
         property_files=[evaluation_report],
+        environment={
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
+        }
     )
 
     # register model step that will be conditionally executed
@@ -248,6 +262,8 @@ def get_pipeline(
             model_approval_status,
             glue_database,
             glue_table,
+            mlflow_tracking_uri,
+            mlflow_experiment_name,
         ],
         steps=[step_process, step_train, step_eval, step_cond],
         sagemaker_session=sagemaker_session,

@@ -3,3 +3,4 @@ boto3
 constructs
 yamldataclassconfig
 python-dotenv
+sagemaker==v2.257.0
