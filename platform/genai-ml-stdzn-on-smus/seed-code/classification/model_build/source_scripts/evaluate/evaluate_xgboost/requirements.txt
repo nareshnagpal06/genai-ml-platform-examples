@@ -1,2 +1,4 @@
-mlflow
+mlflow==3.4.0
+sagemaker-mlflow
 boto3
+xgboost

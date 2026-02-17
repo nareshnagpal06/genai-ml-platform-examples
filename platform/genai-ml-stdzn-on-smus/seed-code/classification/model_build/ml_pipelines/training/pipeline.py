@@ -31,6 +31,7 @@ def get_pipeline(
         ModelMetrics,
     )
     from sagemaker.processing import (
+        FrameworkProcessor,
         ProcessingInput,
         ProcessingOutput,
         ScriptProcessor,
@@ -54,6 +55,11 @@ def get_pipeline(
         TrainingStep,
     )
     from sagemaker.workflow.step_collections import RegisterModel
+    from sagemaker.workflow.pipeline_context import PipelineSession
+    
+    # Ensure we have a PipelineSession (required for step_args pattern)
+    if sagemaker_session is None or not isinstance(sagemaker_session, PipelineSession):
+        sagemaker_session = PipelineSession(default_bucket=default_bucket)
     
     # Parameters for pipeline execution
     processing_instance_type = ParameterString(
@@ -81,65 +87,50 @@ def get_pipeline(
         name="MLflowExperimentName", default_value="BankMarketingExperiment"
     )
     
-    # Create a ScriptProcessor for data preprocessing with requirements.txt
-    script_processor = ScriptProcessor(
-        image_uri=sagemaker.image_uris.retrieve(
-            framework="sklearn",
-            region=region,
-            version="1.0-1",
-            py_version="py3",
-            instance_type="ml.m5.xlarge",
-        ),
+    # Create FrameworkProcessor for data preprocessing (supports source_dir + requirements.txt)
+    sklearn_processor = FrameworkProcessor(
+        estimator_cls=sagemaker.sklearn.estimator.SKLearn,
+        framework_version="1.4-2",
         instance_type=processing_instance_type,
         instance_count=processing_instance_count,
-        base_job_name=f"{base_job_prefix}/requirements-preprocess",
-        command=["python3"],
+        base_job_name=f"{base_job_prefix}/sklearn-preprocess",
         sagemaker_session=sagemaker_session,
         role=role,
         output_kms_key=bucket_kms_id,
+        env={
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
+        }
     )
     
     # Processing step using AWS Data Wrangler with requirements.txt
-    step_process = ProcessingStep(
-        name="PreprocessBankMarketingData",
-        processor=script_processor,
-        inputs=[
-            # Add requirements.txt as an input
-            ProcessingInput(
-                source=f"s3://{default_bucket}/SMUSMLOPS/requirements-preprocess/input/dependencies/",
-                destination="/opt/ml/processing/input/requirements",
-                input_name="requirements"
-            )
-        ],
+    step_process_args = sklearn_processor.run(
         outputs=[
             ProcessingOutput(output_name="train", source="/opt/ml/processing/train"),
             ProcessingOutput(output_name="validation", source="/opt/ml/processing/validation"),
             ProcessingOutput(output_name="test", source="/opt/ml/processing/test"),
         ],
-        code="source_scripts/preprocessing/prepare_bank_data/main.py",
-        job_arguments=[
+        code="main.py",
+        source_dir="source_scripts/preprocessing/prepare_bank_data",
+        arguments=[
             "--database-name", glue_database,
             "--table-name", glue_table
         ],
-        environment={
-            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
-            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
-        }
+    )
+    step_process = ProcessingStep(
+        name="PreprocessBankMarketingData",
+        step_args=step_process_args,
     )
 
-    # training step for generating model artifacts
+    # training step for generating model artifacts using script-mode XGBoost with MLflow
     model_path = f"s3://{default_bucket}/{base_job_prefix}/BankMarketingTrain"
 
-    image_uri = sagemaker.image_uris.retrieve(
-        framework="xgboost",
-        region=region,
-        version="1.0-1",
-        py_version="py3",
-        instance_type="ml.m5.xlarge",
-    )
+    from sagemaker.xgboost.estimator import XGBoost
 
-    xgb_train = Estimator(
-        image_uri=image_uri,
+    xgb_train = XGBoost(
+        entry_point="train.py",
+        source_dir="source_scripts/training/xgboost",
+        framework_version="1.7-1",
         instance_type=training_instance_type,
         instance_count=1,
         output_path=model_path,
@@ -147,16 +138,19 @@ def get_pipeline(
         sagemaker_session=sagemaker_session,
         role=role,
         output_kms_key=bucket_kms_id,
-    )
-    xgb_train.set_hyperparameters(
-        objective="binary:logistic",
-        num_round=100,
-        max_depth=5,
-        eta=0.2,
-        gamma=4,
-        min_child_weight=6,
-        subsample=0.8,
-        silent=0,
+        hyperparameters={
+            "max_depth": 5,
+            "eta": 0.2,
+            "gamma": 4,
+            "min_child_weight": 6,
+            "subsample": 0.8,
+            "num_round": 100,
+            "objective": "binary:logistic",
+        },
+        environment={
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name,
+        },
     )
     step_train = TrainingStep(
         name="TrainBankMarketingModel",
@@ -173,25 +167,27 @@ def get_pipeline(
         },
     )
 
-    # processing step for evaluation
-    script_eval = ScriptProcessor(
-        image_uri=image_uri,
-        command=["python3"],
+    # FrameworkProcessor for evaluation (supports source_dir + requirements.txt)
+    sklearn_eval = FrameworkProcessor(
+        estimator_cls=sagemaker.sklearn.estimator.SKLearn,
+        framework_version="1.4-2",
         instance_type=processing_instance_type,
         instance_count=1,
-        base_job_name=f"{base_job_prefix}/script-bank-marketing-eval",
+        base_job_name=f"{base_job_prefix}/sklearn-eval",
         sagemaker_session=sagemaker_session,
         role=role,
         output_kms_key=bucket_kms_id,
+        env={
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
+        }
     )
     evaluation_report = PropertyFile(
         name="BankMarketingEvaluationReport",
         output_name="evaluation",
         path="evaluation.json",
     )
-    step_eval = ProcessingStep(
-        name="EvaluateBankMarketingModel",
-        processor=script_eval,
+    step_eval_args = sklearn_eval.run(
         inputs=[
             ProcessingInput(
                 source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
@@ -205,12 +201,13 @@ def get_pipeline(
         outputs=[
             ProcessingOutput(output_name="evaluation", source="/opt/ml/processing/evaluation"),
         ],
-        code="source_scripts/evaluate/evaluate_xgboost/main.py",
+        code="main.py",
+        source_dir="source_scripts/evaluate/evaluate_xgboost",
+    )
+    step_eval = ProcessingStep(
+        name="EvaluateBankMarketingModel",
+        step_args=step_eval_args,
         property_files=[evaluation_report],
-        environment={
-            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
-            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name
-        }
     )
 
     # register model step that will be conditionally executed

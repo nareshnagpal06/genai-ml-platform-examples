@@ -22,18 +22,21 @@ import pathlib
 import pickle
 import tarfile
 import os
+import sys
+import subprocess
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
+
+# Dependencies are installed via requirements.txt (mlflow, sagemaker-mlflow, boto3)
 
 import numpy as np
 import pandas as pd
 import xgboost
 import mlflow
-
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from time import gmtime, strftime
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
 
 def is_within_directory(directory, target):
     """Check if the target is within the given directory."""
@@ -80,7 +83,7 @@ if __name__ == "__main__":
         logger.debug("Reading test data.")
         y_test = df.iloc[:, 0].to_numpy()
         df.drop(df.columns[0], axis=1, inplace=True)
-        X_test = xgboost.DMatrix(df.values)
+        X_test = xgboost.DMatrix(df, feature_names=[str(i) for i in range(df.shape[1])])
 
         logger.info("Performing predictions against test data.")
         predictions_prob = model.predict(X_test)

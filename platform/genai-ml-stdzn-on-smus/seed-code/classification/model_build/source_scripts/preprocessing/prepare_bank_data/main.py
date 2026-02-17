@@ -7,45 +7,25 @@ import logging
 import os
 import pathlib
 import sys
-import subprocess
 import boto3
 import numpy as np
 import pandas as pd
 import mlflow
 from time import gmtime, strftime
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
-
-# Install dependencies
-logger.info("Installing dependencies")
-try:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "awswrangler==2.16.1", "pymysql"])
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pandas==1.1.3", "--force-reinstall"])
-except subprocess.CalledProcessError as e:
-    logger.error(f"Error installing dependencies: {e}")
-    sys.exit(1)
-
-region = os.environ.get('AWS_REGION', 'us-east-1')
-boto3_session = boto3.Session(region_name=region)
-
-try:
-    import awswrangler as wr
-    wr.config.aws_region = region
-except ImportError as e:
-    logger.error(f"Error importing AWS Data Wrangler: {e}")
-    sys.exit(1)
-
+import awswrangler as wr
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
+
 # Bank marketing dataset features
-numeric_features = ["age", "duration", "campaign", "pdays", "previous", 
+numeric_features = ["age", "duration", "campaign", "pdays", "previous",
                    "emp.var.rate", "cons.price.idx", "cons.conf.idx", "euribor3m", "nr.employed"]
-categorical_features = ["job", "marital", "education", "default", "housing", "loan", 
+categorical_features = ["job", "marital", "education", "default", "housing", "loan",
                        "contact", "month", "day_of_week", "poutcome"]
 label_column = "y"
 
@@ -56,11 +36,15 @@ if __name__ == "__main__":
     parser.add_argument("--table-name", type=str, required=True)
     args = parser.parse_args()
 
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    boto3_session = boto3.Session(region_name=region)
+    wr.config.aws_region = region
+
     # MLflow setup
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME")
     run_id = os.environ.get("MLFLOW_RUN_ID")
-    
+
     if tracking_uri:
         suffix = strftime('%d-%H-%M-%S', gmtime())
         mlflow.set_tracking_uri(tracking_uri)
@@ -72,7 +56,7 @@ if __name__ == "__main__":
         pathlib.Path(f"{base_dir}/train").mkdir(parents=True, exist_ok=True)
         pathlib.Path(f"{base_dir}/validation").mkdir(parents=True, exist_ok=True)
         pathlib.Path(f"{base_dir}/test").mkdir(parents=True, exist_ok=True)
-        
+
         try:
             logger.info(f"Getting table location for {args.database_name}.{args.table_name}")
             s3_location = wr.catalog.get_table_location(
@@ -81,7 +65,7 @@ if __name__ == "__main__":
                 boto3_session=boto3_session
             )
             logger.info(f"Found table S3 location: {s3_location}")
-            
+
             logger.info("Reading data from S3 location")
             df = wr.s3.read_csv(
                 path=s3_location,
@@ -90,11 +74,11 @@ if __name__ == "__main__":
                 boto3_session=boto3_session
             )
             logger.info(f"Successfully read {len(df)} rows from S3")
-            
+
         except Exception as e:
             logger.error(f"Error reading from Glue catalog: {e}")
             sys.exit(1)
-        
+
         # Data preprocessing
         logger.info("Defining transformers")
         numeric_transformer = Pipeline(steps=[
@@ -142,9 +126,10 @@ if __name__ == "__main__":
         pd.DataFrame(train).to_csv(f"{base_dir}/train/train.csv", header=False, index=False)
         pd.DataFrame(validation).to_csv(f"{base_dir}/validation/validation.csv", header=False, index=False)
         pd.DataFrame(test).to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
-        
+
         logger.info("Data preprocessing completed successfully")
-    
+
     finally:
         if tracking_uri:
             mlflow.end_run()
+

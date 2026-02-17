@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--kwargs", type=str, default=None)
     parser.add_argument("--pipeline-name", type=str, default=None)
     parser.add_argument("--log-level", type=str, default=None)
+    parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
+    parser.add_argument("--mlflow-experiment-name", type=str, default="BankMarketingExperiment")
     args = parser.parse_args()
 
     if args.log_level is not None:
@@ -50,7 +52,12 @@ def main():
     pipeline.upsert(role_arn=args.role_arn, tags=tags)
 
     logger.info("Starting pipeline execution")
-    pipeline.start()
+    execution_params = {}
+    if args.mlflow_tracking_uri:
+        execution_params["MLflowTrackingUri"] = args.mlflow_tracking_uri
+        execution_params["MLflowExperimentName"] = args.mlflow_experiment_name
+    
+    pipeline.start(parameters=execution_params if execution_params else None)
 
     logger.info(f"Pipeline {pipeline.name} successfully created/updated and started")
 
