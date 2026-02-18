@@ -1,0 +1,4 @@
+-e .
+sagemaker>=2.257.0
+boto3
+awswrangler
