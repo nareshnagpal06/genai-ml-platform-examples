@@ -1,6 +1,4 @@
-aws-cdk-lib
+-e .
+sagemaker>=2.257.0
 boto3
-constructs
-yamldataclassconfig
-python-dotenv
-sagemaker==v2.257.0
+awswrangler

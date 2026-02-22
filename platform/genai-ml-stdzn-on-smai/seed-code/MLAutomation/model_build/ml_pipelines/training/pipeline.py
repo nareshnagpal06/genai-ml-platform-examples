@@ -7,6 +7,7 @@ def get_pipeline(
     base_job_prefix="BankMarketing",
     bucket_kms_id=None,
     sagemaker_session=None,
+    sagemaker_project_arn=None,
     glue_database_name=None,
     glue_table_name=None,
 ):
