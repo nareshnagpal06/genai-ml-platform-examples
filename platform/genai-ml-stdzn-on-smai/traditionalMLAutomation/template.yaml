@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3-based MLOps template for Bank Marketing Classification using SageMaker and GitHub Actions with Glue Catalog integration'
+
+Parameters:
+  SageMakerProjectName:
+    Type: String
+    Description: Name of the project
+    MinLength: 1
+    MaxLength: 32
+    AllowedPattern: ^[a-zA-Z](-*[a-zA-Z0-9])*
+
+  SageMakerProjectId:
+    Type: String
+    Description: Service generated ID of the project
+
+  CodeRepositoryName:
+    Type: String
+    MaxLength: 1024
+    Description: GitHub repository name for Model Building and Deployment
+
+  GitHubRepositoryOwnerName:
+    Type: String
+    MaxLength: 1024
+    Description: GitHub Repository Owner Name (username or organization)
+
+  CodestarConnectionUniqueId:
+    Type: String
+    MaxLength: 1024
+    Description: CodeStar connection unique identifier
+
+  GitHubTokenSecretName:
+    Type: String
+    MaxLength: 1024
+    Description: Name of GitHub Token in AWS Secrets Manager
+
+  GitHubWorkflowNameForDeployment:
+    Type: String
+    MaxLength: 1024
+    Default: deploy.yml
+    Description: GitHub workflow file name for deployment
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing the Lambda function zip file
+
+  LambdaS3Key:
+    Type: String
+    Description: S3 key for the Lambda function zip file
+    Default: lambda/lambda-github-workflow-trigger.zip
+
+  GlueDatabaseName:
+    Type: String
+    Description: Glue database name containing training data
+    Default: ""
+
+  GlueTableName:
+    Type: String
+    Description: Glue table name with training data
+    Default: ""
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Project Information"
+        Parameters:
+          - SageMakerProjectName
+          - SageMakerProjectId
+      - Label:
+          default: "GitHub Repository Configuration"
+        Parameters:
+          - GitHubRepositoryOwnerName
+          - CodeRepositoryName
+          - CodestarConnectionUniqueId
+          - GitHubTokenSecretName
+          - GitHubWorkflowNameForDeployment
+      - Label:
+          default: "Data Source Configuration"
+        Parameters:
+          - GlueDatabaseName
+          - GlueTableName
+      - Label:
+          default: "Lambda Configuration"
+        Parameters:
+          - LambdaS3Bucket
+          - LambdaS3Key
+
+Resources:
+  MlOpsArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub sagemaker-project-github-${SageMakerProjectId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ModelDeployLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${SageMakerProjectName}-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GitHubTokenSecretName}*
+
+  ModelDeployLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${SageMakerProjectName}-github-trigger
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt ModelDeployLambdaExecutionRole.Arn
+      Timeout: 60
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          GITHUB_TOKEN_SECRET_NAME: !Ref GitHubTokenSecretName
+          GITHUB_REPO_OWNER: !Ref GitHubRepositoryOwnerName
+          GITHUB_REPO_NAME: !Ref CodeRepositoryName
+          GITHUB_WORKFLOW_NAME: !Ref GitHubWorkflowNameForDeployment
+
+  EventBridgeInvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ModelDeployLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ModelApprovalEventRule.Arn
+
+  ModelApprovalEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${SageMakerProjectName}-model-approval
+      Description: Trigger deployment when model is approved
+      EventPattern:
+        source:
+          - aws.sagemaker
+        detail-type:
+          - SageMaker Model Package State Change
+        detail:
+          ModelPackageGroupName:
+            - !Sub ${SageMakerProjectName}-${SageMakerProjectId}
+          ModelApprovalStatus:
+            - Approved
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ModelDeployLambda.Arn
+          Id: ModelDeploymentTarget
+
+  SageMakerCodeRepository:
+    Type: AWS::SageMaker::CodeRepository
+    Properties:
+      CodeRepositoryName: !Sub ${SageMakerProjectName}-${SageMakerProjectId}
+      GitConfig:
+        RepositoryUrl: !Sub https://github.com/${GitHubRepositoryOwnerName}/${CodeRepositoryName}
+
+Outputs:
+  ArtifactBucket:
+    Description: S3 bucket for ML artifacts
+    Value: !Ref MlOpsArtifactsBucket
+
+  LambdaFunctionArn:
+    Description: Lambda function ARN for GitHub workflow trigger
+    Value: !GetAtt ModelDeployLambda.Arn
+
+  EventRuleArn:
+    Description: EventBridge rule ARN
+    Value: !GetAtt ModelApprovalEventRule.Arn
+
+  CodeRepositoryName:
+    Description: SageMaker code repository name
+    Value: !GetAtt SageMakerCodeRepository.CodeRepositoryName
+
+  ModelPackageGroupName:
+    Description: Model package group name
+    Value: !Sub ${SageMakerProjectName}-${SageMakerProjectId}

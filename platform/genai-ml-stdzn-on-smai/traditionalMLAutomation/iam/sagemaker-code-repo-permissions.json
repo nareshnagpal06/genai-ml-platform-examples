@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sagemaker:CreateCodeRepository",
+        "sagemaker:DeleteCodeRepository",
+        "sagemaker:DescribeCodeRepository",
+        "sagemaker:UpdateCodeRepository",
+        "sagemaker:TagResource"
+      ],
+      "Resource": "arn:aws:sagemaker:*:*:code-repository/*"
+    }
+  ]
+}
