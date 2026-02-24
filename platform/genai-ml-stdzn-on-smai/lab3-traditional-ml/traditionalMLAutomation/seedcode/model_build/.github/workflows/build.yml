@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: us-east-1
-  SAGEMAKER_PROJECT_NAME: bank-marketing-classification
+  AWS_REGION: us-west-2
+  SAGEMAKER_PROJECT_NAME: naresh0623
 
 jobs:
   Build:

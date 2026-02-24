@@ -10,6 +10,8 @@ def get_pipeline(
     sagemaker_project_arn=None,
     glue_database_name=None,
     glue_table_name=None,
+    mlflow_tracking_uri=None,
+    mlflow_experiment_name="BankMarketingExperiment",
 ):
     """Gets a SageMaker ML Pipeline instance working with bank marketing data.
 
@@ -81,11 +83,11 @@ def get_pipeline(
     glue_table = ParameterString(
         name="GlueTable", default_value=glue_table_name
     )
-    mlflow_tracking_uri = ParameterString(
-        name="MLflowTrackingUri", default_value=""
+    mlflow_tracking_uri_param = ParameterString(
+        name="MLflowTrackingUri", default_value=mlflow_tracking_uri or ""
     )
-    mlflow_experiment_name = ParameterString(
-        name="MLflowExperimentName", default_value="BankMarketingExperiment"
+    mlflow_experiment_name_param = ParameterString(
+        name="MLflowExperimentName", default_value=mlflow_experiment_name or "BankMarketingExperiment"
     )
     mlflow_parent_run_id = ParameterString(
         name="MLflowParentRunId", default_value=""
@@ -102,8 +104,8 @@ def get_pipeline(
         role=role,
         output_kms_key=bucket_kms_id,
         env={
-            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
-            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name,
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri_param,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name_param,
             "MLFLOW_PARENT_RUN_ID": mlflow_parent_run_id
         }
     )
@@ -153,8 +155,8 @@ def get_pipeline(
             "objective": "binary:logistic",
         },
         environment={
-            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
-            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name,
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri_param,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name_param,
             "MLFLOW_PARENT_RUN_ID": mlflow_parent_run_id,
         },
     )
@@ -184,8 +186,8 @@ def get_pipeline(
         role=role,
         output_kms_key=bucket_kms_id,
         env={
-            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
-            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name,
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri_param,
+            "MLFLOW_EXPERIMENT_NAME": mlflow_experiment_name_param,
             "MLFLOW_PARENT_RUN_ID": mlflow_parent_run_id
         }
     )
@@ -266,11 +268,37 @@ def get_pipeline(
             model_approval_status,
             glue_database,
             glue_table,
-            mlflow_tracking_uri,
-            mlflow_experiment_name,
+            mlflow_tracking_uri_param,
+            mlflow_experiment_name_param,
             mlflow_parent_run_id,
         ],
         steps=[step_process, step_train, step_eval, step_cond],
         sagemaker_session=sagemaker_session,
     )
     return pipeline
+
+
+def get_pipeline_custom_tags(tags, region, sagemaker_project_arn):
+    """Get custom tags for the pipeline.
+    
+    Args:
+        tags: Existing tags
+        region: AWS region
+        sagemaker_project_arn: SageMaker project ARN
+        
+    Returns:
+        Combined tags
+    """
+    try:
+        # Check if project-name tag already exists
+        existing_keys = {tag.get("Key") for tag in tags}
+        
+        project_name = sagemaker_project_arn.split("/")[-1] if sagemaker_project_arn else ""
+        custom_tags = []
+        
+        if project_name and "sagemaker:project-name" not in existing_keys:
+            custom_tags.append({"Key": "sagemaker:project-name", "Value": project_name})
+        
+        return custom_tags + tags
+    except Exception:
+        return tags

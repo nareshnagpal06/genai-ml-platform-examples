@@ -26,3 +26,13 @@ Thumbs.db
 *.log
 *.sqlite
 CLAUDE.md
+
+
+# Build artifacts
+**/build/
+**/lambda-github-workflow-trigger.zip
+
+# CORS policy (generated)
+cors-policy.json
+
+.kiro/

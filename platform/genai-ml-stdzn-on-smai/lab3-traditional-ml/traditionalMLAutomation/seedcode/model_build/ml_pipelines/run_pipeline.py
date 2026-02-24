@@ -57,6 +57,29 @@ def main():
     tags = convert_struct(args.tags)
 
     try:
+        # Get kwargs to check for MLflow configuration
+        kwargs = convert_struct(args.kwargs)
+        mlflow_tracking_uri = kwargs.get('mlflow_tracking_uri')
+        mlflow_experiment_name = kwargs.get('mlflow_experiment_name', 'BankMarketingExperiment')
+        
+        # Create parent MLflow run if tracking URI is provided
+        parent_run_id = None
+        if mlflow_tracking_uri:
+            try:
+                import mlflow
+                mlflow.set_tracking_uri(mlflow_tracking_uri)
+                mlflow.set_experiment(mlflow_experiment_name)
+                parent_run = mlflow.start_run(run_name=f"pipeline-{kwargs.get('pipeline_name', 'run')}")
+                parent_run_id = parent_run.info.run_id
+                print(f"\n###### Created parent MLflow run: {parent_run_id}")
+                mlflow.end_run()  # End locally; child runs will nest under this ID
+                
+                # Add parent run ID to kwargs
+                kwargs['mlflow_parent_run_id'] = parent_run_id
+                args.kwargs = json.dumps(kwargs)
+            except Exception as e:
+                print(f"Warning: Failed to create parent MLflow run: {e}")
+        
         pipeline = get_pipeline_driver(args.module_name, args.kwargs)
         print("###### Creating/updating a SageMaker Pipeline with the following definition:")
         parsed = json.loads(pipeline.definition())
@@ -70,7 +93,14 @@ def main():
         print("\n###### Created/Updated SageMaker Pipeline: Response received:")
         print(upsert_response)
 
-        execution = pipeline.start()
+        # Prepare execution parameters
+        execution_params = {}
+        if parent_run_id:
+            execution_params['MLflowParentRunId'] = parent_run_id
+            execution_params['MLflowTrackingUri'] = mlflow_tracking_uri
+            execution_params['MLflowExperimentName'] = mlflow_experiment_name
+
+        execution = pipeline.start(parameters=execution_params if execution_params else None)
         print(f"\n###### Execution started with PipelineExecutionArn: {execution.arn}")
 
         print("Waiting for the execution to finish...")
